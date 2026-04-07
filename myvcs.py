@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, json, time, hashlib, difflib
+import os, sys, json, time, hashlib, difflib, shutil
 
 VCS_DIR = ".myvcs"
 COMMITS_DIR = os.path.join(VCS_DIR, "commits")
@@ -22,6 +22,13 @@ def read_file(path):
     except:
         return []
 
+def write_file(path, lines):
+    dirpath = os.path.dirname(path)
+    if dirpath:
+        os.makedirs(dirpath, exist_ok=True)
+    with open(path, "w") as f:
+        f.writelines(lines)
+
 def get_all_files():
     files = []
     for root, dirs, fs in os.walk("."):
@@ -30,6 +37,12 @@ def get_all_files():
         for f in fs:
             files.append(os.path.relpath(os.path.join(root, f), "."))
     return files
+
+def snapshot(commit_path):
+    for file in get_all_files():
+        dest = os.path.join(commit_path, file)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(file, dest)
 
 def save(msg):
     if not os.path.exists(VCS_DIR):
@@ -44,43 +57,94 @@ def save(msg):
     commit_path = os.path.join(COMMITS_DIR, commit_id)
     os.makedirs(commit_path)
 
-    prev_files = {}
-    if log:
-        last_commit = log[-1]["id"]
-        last_path = os.path.join(COMMITS_DIR, last_commit)
-        for root, dirs, fs in os.walk(last_path):
-            for f in fs:
-                rel = os.path.relpath(os.path.join(root, f), last_path)
-                prev_files[rel] = read_file(os.path.join(root, f))
-
-    current_files = get_all_files()
     commit_data = {
         "id": commit_id,
         "message": msg,
         "time": timestamp,
+        "type": "diff",
         "changes": {}
     }
 
-    for file in current_files:
-        new_content = read_file(file)
-        old_content = prev_files.get(file, [])
+    # FIRST COMMIT → FULL SNAPSHOT
+    if not log:
+        snapshot(commit_path)
+        commit_data["type"] = "snapshot"
+        commit_data["files"] = get_all_files()
 
-        if new_content != old_content:
-            diff = list(difflib.unified_diff(old_content, new_content, lineterm=""))
-            commit_data["changes"][file] = diff
+    else:
+        prev_commit = log[-1]["id"]
+        prev_path = os.path.join(COMMITS_DIR, prev_commit)
 
-            save_path = os.path.join(commit_path, file + ".diff")
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            with open(save_path, "w") as f:
-                f.write("\n".join(diff))
+        for file in get_all_files():
+            new = read_file(file)
+            old = read_file(os.path.join(prev_path, file))
+
+            if new != old:
+                diff = list(difflib.unified_diff(old, new, lineterm=""))
+                commit_data["changes"][file] = diff
+
+                save_path = os.path.join(commit_path, file + ".diff")
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                with open(save_path, "w") as f:
+                    f.write("\n".join(diff))
+
+    log.append(commit_data)
 
     with open(LOG_FILE, "w") as f:
-        log.append(commit_data)
         json.dump(log, f, indent=2)
 
     print(f"Saved commit {commit_id}")
 
-def log():
+def rebuild(commit_id, log):
+    files = {}
+
+    for c in log:
+        cid = c["id"]
+        cpath = os.path.join(COMMITS_DIR, cid)
+
+        if c["type"] == "snapshot":
+            for root, dirs, fs in os.walk(cpath):
+                for f in fs:
+                    rel = os.path.relpath(os.path.join(root, f), cpath)
+                    files[rel] = read_file(os.path.join(root, f))
+
+        else:
+            for file, diff in c["changes"].items():
+                old = files.get(file, [])
+                patched = list(difflib.restore(diff, 1))
+                files[file] = patched
+
+        if cid == commit_id:
+            break
+
+    return files
+
+def restore(commit_id):
+    if not os.path.exists(LOG_FILE):
+        print("No commits")
+        return
+
+    with open(LOG_FILE, "r") as f:
+        log = json.load(f)
+
+    files = rebuild(commit_id, log)
+
+    # clear current working dir (except .myvcs)
+    for root, dirs, fs in os.walk("."):
+        if VCS_DIR in root:
+            continue
+        for f in fs:
+            try:
+                os.remove(os.path.join(root, f))
+            except:
+                pass
+
+    for path, content in files.items():
+        write_file(path, content)
+
+    print(f"Restored to commit {commit_id}")
+
+def log_cmd():
     if not os.path.exists(LOG_FILE):
         print("No commits")
         return
@@ -92,9 +156,6 @@ def log():
         print(f"\nCommit: {c['id']}")
         print(f"Message: {c['message']}")
         print(f"Time: {c['time']}")
-        print("Changed files:")
-        for f_ in c["changes"]:
-            print(f"  {f_}")
 
 def main():
     if len(sys.argv) < 2:
@@ -108,8 +169,9 @@ def main():
         msg = " ".join(sys.argv[2:])
         save(msg)
     elif cmd == "log":
-        log()
+        log_cmd()
+    elif cmd == "restore":
+        restore(sys.argv[2])
 
 if __name__ == "__main__":
     main()
-
