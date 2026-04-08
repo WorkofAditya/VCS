@@ -55,7 +55,6 @@ def leaf_save(msg):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     commit_id = leaf_hash_commit(msg + timestamp)[:10]
     commit_path = os.path.join(COMMITS_DIR, commit_id)
-    os.makedirs(commit_path)
 
     commit_data = {
         "id": commit_id,
@@ -66,6 +65,7 @@ def leaf_save(msg):
     }
 
     if not log:
+        os.makedirs(commit_path)
         leaf_snapshot(commit_path)
         commit_data["type"] = "snapshot"
         commit_data["files"] = leaf_get_all_files()
@@ -81,10 +81,17 @@ def leaf_save(msg):
                 diff = list(difflib.unified_diff(old, new, lineterm=""))
                 commit_data["changes"][file] = diff
 
-                save_path = os.path.join(commit_path, file + ".diff")
-                os.makedirs(os.path.dirname(save_path), exist_ok=True)
-                with open(save_path, "w") as f:
-                    f.write("\n".join(diff))
+        if not commit_data["changes"]:
+            print("No changes detected, nothing to save")
+            return
+
+        os.makedirs(commit_path)
+
+        for file, diff in commit_data["changes"].items():
+            save_path = os.path.join(commit_path, file + ".diff")
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            with open(save_path, "w") as f:
+                f.write("\n".join(diff))
 
     log.append(commit_data)
 
@@ -107,7 +114,6 @@ def leaf_rebuild(commit_id, log):
                     files[rel] = leaf_read_file(os.path.join(root, f))
         else:
             for file, diff in c["changes"].items():
-                old = files.get(file, [])
                 patched = list(difflib.restore(diff, 1))
                 files[file] = patched
 
@@ -159,14 +165,14 @@ def main():
 
     cmd = sys.argv[1]
 
-    if cmd == "leaf init":
+    if cmd == "init":
         leaf_init()
-    elif cmd == "leaf save":
+    elif cmd == "save":
         msg = " ".join(sys.argv[2:])
         leaf_save(msg)
-    elif cmd == "leaf log":
+    elif cmd == "log":
         leaf_log()
-    elif cmd == "leaf restore":
+    elif cmd == "restore":
         leaf_restore(sys.argv[2])
 
 if __name__ == "__main__":
