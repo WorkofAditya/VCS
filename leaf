@@ -5,12 +5,18 @@ VCS_DIR = ".leaf"
 COMMITS_DIR = os.path.join(VCS_DIR, "commits")
 LOG_FILE = os.path.join(VCS_DIR, "log.json")
 
+LEAF = "🍃"
+SPROUT = "🌱"
+HERB = "🌿"
+DRY = "🍂"
+TREE = "🌳"
+
 def leaf_init():
     os.makedirs(COMMITS_DIR, exist_ok=True)
     if not os.path.exists(LOG_FILE):
         with open(LOG_FILE, "w") as f:
             json.dump([], f)
-    print("Initialized empty leaf repository")
+    print(f"{SPROUT} Initialized empty leaf repository")
 
 def leaf_hash_commit(data):
     return hashlib.sha1(data.encode()).hexdigest()
@@ -46,7 +52,7 @@ def leaf_snapshot(commit_path):
 
 def leaf_save(msg):
     if not os.path.exists(VCS_DIR):
-        print("Not a repository")
+        print(f"{DRY} Not a repository")
         return
 
     with open(LOG_FILE, "r") as f:
@@ -82,7 +88,7 @@ def leaf_save(msg):
                 commit_data["changes"][file] = diff
 
         if not commit_data["changes"]:
-            print("No changes detected, nothing to save")
+            print(f"{DRY} No changes detected, nothing to save")
             return
 
         os.makedirs(commit_path)
@@ -98,7 +104,7 @@ def leaf_save(msg):
     with open(LOG_FILE, "w") as f:
         json.dump(log, f, indent=2)
 
-    print(f"Saved commit {commit_id}")
+    print(f"{LEAF} Saved commit {commit_id}")
 
 def leaf_rebuild(commit_id, log):
     files = {}
@@ -124,7 +130,7 @@ def leaf_rebuild(commit_id, log):
 
 def leaf_restore(commit_id):
     if not os.path.exists(LOG_FILE):
-        print("No commits")
+        print(f"{DRY} No commits")
         return
 
     with open(LOG_FILE, "r") as f:
@@ -144,20 +150,20 @@ def leaf_restore(commit_id):
     for path, content in files.items():
         leaf_write_file(path, content)
 
-    print(f"Restored to commit {commit_id}")
+    print(f"{TREE} Restored to commit {commit_id}")
 
 def leaf_log():
     if not os.path.exists(LOG_FILE):
-        print("No commits")
+        print(f"{DRY} No commits")
         return
 
     with open(LOG_FILE, "r") as f:
         log = json.load(f)
 
     for c in reversed(log):
-        print(f"\nCommit: {c['id']}")
-        print(f"Message: {c['message']}")
-        print(f"Time: {c['time']}")
+        print(f"\n{HERB} Commit: {c['id']}")
+        print(f"{LEAF} Message: {c['message']}")
+        print(f"{SPROUT} Time: {c['time']}")
 
 def main():
     if len(sys.argv) < 2:
