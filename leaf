@@ -4,6 +4,7 @@ import os, sys, json, time, hashlib, difflib, shutil
 VCS_DIR = ".leaf"
 COMMITS_DIR = os.path.join(VCS_DIR, "commits")
 LOG_FILE = os.path.join(VCS_DIR, "log.json")
+LOG_BACKUP = os.path.join(VCS_DIR, "log.bak")
 
 LEAF = "🍃"
 SPROUT = "🌱"
@@ -20,6 +21,16 @@ def leaf_init():
 
 def leaf_hash_commit(data):
     return hashlib.sha1(data.encode()).hexdigest()
+
+def is_binary(path):
+    try:
+        with open(path, "rb") as f:
+            chunk = f.read(1024)
+            if b"\0" in chunk:
+                return True
+    except:
+        return True
+    return False
 
 def leaf_read_file(path):
     try:
@@ -50,16 +61,31 @@ def leaf_snapshot(commit_path):
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copy2(file, dest)
 
+def safe_load_log():
+    try:
+        with open(LOG_FILE, "r") as f:
+            return json.load(f)
+    except:
+        if os.path.exists(LOG_BACKUP):
+            with open(LOG_BACKUP, "r") as f:
+                return json.load(f)
+        return []
+
+def safe_save_log(log):
+    if os.path.exists(LOG_FILE):
+        shutil.copy2(LOG_FILE, LOG_BACKUP)
+    with open(LOG_FILE, "w") as f:
+        json.dump(log, f, indent=2)
+
 def leaf_save(msg):
     if not os.path.exists(VCS_DIR):
         print(f"{DRY} Not a repository")
         return
 
-    with open(LOG_FILE, "r") as f:
-        log = json.load(f)
+    log = safe_load_log()
 
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    commit_id = leaf_hash_commit(msg + timestamp)[:10]
+    commit_id = leaf_hash_commit(msg + timestamp + str(time.time()))[:10]
     commit_path = os.path.join(COMMITS_DIR, commit_id)
 
     commit_data = {
@@ -67,27 +93,41 @@ def leaf_save(msg):
         "message": msg,
         "time": timestamp,
         "type": "diff",
-        "changes": {}
+        "changes": {},
+        "deleted": []
     }
+
+    current_files = set(leaf_get_all_files())
 
     if not log:
         os.makedirs(commit_path)
         leaf_snapshot(commit_path)
         commit_data["type"] = "snapshot"
-        commit_data["files"] = leaf_get_all_files()
+        commit_data["files"] = list(current_files)
     else:
         prev_commit = log[-1]["id"]
         prev_path = os.path.join(COMMITS_DIR, prev_commit)
 
-        for file in leaf_get_all_files():
+        prev_files = set()
+        for root, _, fs in os.walk(prev_path):
+            for f in fs:
+                rel = os.path.relpath(os.path.join(root, f), prev_path)
+                if not rel.endswith(".diff"):
+                    prev_files.add(rel)
+
+        deleted = prev_files - current_files
+        commit_data["deleted"] = list(deleted)
+
+        for file in current_files:
+            if is_binary(file):
+                continue
             new = leaf_read_file(file)
             old = leaf_read_file(os.path.join(prev_path, file))
-
             if new != old:
-                diff = list(difflib.unified_diff(old, new, lineterm=""))
+                diff = list(difflib.ndiff(old, new))
                 commit_data["changes"][file] = diff
 
-        if not commit_data["changes"]:
+        if not commit_data["changes"] and not deleted:
             print(f"{DRY} No changes detected, nothing to save")
             return
 
@@ -100,9 +140,7 @@ def leaf_save(msg):
                 f.write("\n".join(diff))
 
     log.append(commit_data)
-
-    with open(LOG_FILE, "w") as f:
-        json.dump(log, f, indent=2)
+    safe_save_log(log)
 
     print(f"{LEAF} Saved commit {commit_id}")
 
@@ -114,41 +152,72 @@ def leaf_rebuild(commit_id, log):
         cpath = os.path.join(COMMITS_DIR, cid)
 
         if c["type"] == "snapshot":
-            for root, dirs, fs in os.walk(cpath):
+            for root, _, fs in os.walk(cpath):
                 for f in fs:
                     rel = os.path.relpath(os.path.join(root, f), cpath)
                     files[rel] = leaf_read_file(os.path.join(root, f))
         else:
+            for file in c.get("deleted", []):
+                if file in files:
+                    del files[file]
+
             for file, diff in c["changes"].items():
-                patched = list(difflib.restore(diff, 1))
+                old = files.get(file, [])
+                patched = []
+                for line in diff:
+                    if line.startswith("  ") or line.startswith("+ "):
+                        patched.append(line[2:])
                 files[file] = patched
 
         if cid == commit_id:
-            break
+            return files
 
-    return files
+    return None
 
 def leaf_restore(commit_id):
     if not os.path.exists(LOG_FILE):
         print(f"{DRY} No commits")
         return
 
-    with open(LOG_FILE, "r") as f:
-        log = json.load(f)
+    log = safe_load_log()
+    ids = [c["id"] for c in log]
+
+    if commit_id not in ids:
+        print(f"{DRY} Invalid commit id")
+        return
 
     files = leaf_rebuild(commit_id, log)
+    if files is None:
+        print(f"{DRY} Restore failed")
+        return
 
-    for root, dirs, fs in os.walk("."):
-        if VCS_DIR in root:
-            continue
-        for f in fs:
-            try:
-                os.remove(os.path.join(root, f))
-            except:
-                pass
+    temp_dir = ".leaf_restore_tmp"
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
+    os.makedirs(temp_dir)
 
     for path, content in files.items():
-        leaf_write_file(path, content)
+        full = os.path.join(temp_dir, path)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w") as f:
+            f.writelines(content)
+
+    current_files = set(leaf_get_all_files())
+    target_files = set(files.keys())
+
+    for f in current_files - target_files:
+        try:
+            os.remove(f)
+        except:
+            pass
+
+    for path in target_files:
+        src = os.path.join(temp_dir, path)
+        dst = path
+        os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+        shutil.copy2(src, dst)
+
+    shutil.rmtree(temp_dir)
 
     print(f"{TREE} Restored to commit {commit_id}")
 
@@ -157,8 +226,7 @@ def leaf_log():
         print(f"{DRY} No commits")
         return
 
-    with open(LOG_FILE, "r") as f:
-        log = json.load(f)
+    log = safe_load_log()
 
     for c in reversed(log):
         print(f"\n{HERB} Commit: {c['id']}")
@@ -179,6 +247,9 @@ def main():
     elif cmd == "log":
         leaf_log()
     elif cmd == "restore":
+        if len(sys.argv) < 3:
+            print(f"{DRY} Missing commit id")
+            return
         leaf_restore(sys.argv[2])
 
 if __name__ == "__main__":
