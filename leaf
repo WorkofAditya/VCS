@@ -117,15 +117,9 @@ def leaf_save(msg):
         commit_data["type"] = "snapshot"
         commit_data["files"] = list(current_files)
     else:
-        prev_commit = log[-1]["id"]
-        prev_path = os.path.join(COMMITS_DIR, prev_commit)
+        previous_state = leaf_get_last_state()
+        prev_files = set(previous_state.keys())
 
-        prev_files = set()
-        for root, _, fs in os.walk(prev_path):
-            for f in fs:
-                rel = os.path.relpath(os.path.join(root, f), prev_path)
-                if not rel.endswith(".diff"):
-                    prev_files.add(rel)
 
         deleted = prev_files - current_files
         commit_data["deleted"] = list(deleted)
@@ -134,7 +128,7 @@ def leaf_save(msg):
             if is_binary(file):
                 continue
             new = leaf_read_file(file)
-            old = leaf_read_file(os.path.join(prev_path, file))
+            old = previous_state.get(file, [])
             if new != old:
                 diff = list(difflib.ndiff(old, new))
                 commit_data["changes"][file] = diff
