@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+import os
+
+
+def head_file_path(vcs_dir):
+    return os.path.join(vcs_dir, "HEAD")
+
+
+def init_head(vcs_dir):
+    os.makedirs(vcs_dir, exist_ok=True)
+    path = head_file_path(vcs_dir)
+    if not os.path.exists(path):
+        with open(path, "w") as f:
+            f.write("")
+
+
+def read_head(vcs_dir):
+    path = head_file_path(vcs_dir)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r") as f:
+            value = f.read().strip()
+            return value or None
+    except:
+        return None
+
+
+def write_head(vcs_dir, commit_id):
+    path = head_file_path(vcs_dir)
+    with open(path, "w") as f:
+        f.write(commit_id.strip() if commit_id else "")
+
+
+def resolve_head(vcs_dir, fallback_commit_id):
+    current = read_head(vcs_dir)
+    return current or fallback_commit_id
