@@ -52,13 +52,50 @@ def leaf_write_file(path, lines):
     with open(path, "w") as f:
         f.writelines(lines)
 
+def load_ignore():
+    ignore = {".leaf", ".git", ".github", ".gitlab"}
+
+    if os.path.exists(".leafignore"):
+        try:
+            with open(".leafignore", "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        ignore.add(line)
+        except:
+            pass
+
+    return ignore
+
 def leaf_get_all_files():
+    ignore = load_ignore()
     files = []
+
     for root, dirs, fs in os.walk("."):
-        if VCS_DIR in root:
-            continue
+        rel_root = os.path.relpath(root, ".")
+
+        # filter dirs in-place (important for performance)
+        dirs[:] = [d for d in dirs if d not in ignore]
+
         for f in fs:
-            files.append(os.path.relpath(os.path.join(root, f), "."))
+            path = os.path.relpath(os.path.join(root, f), ".")
+
+            ignored = False
+
+            for ig in ignore:
+                # pattern like *.log
+                if ig.startswith("*.") and f.endswith(ig[1:]):
+                    ignored = True
+                    break
+
+                # exact file or folder name match anywhere
+                if ig in path.split(os.sep):
+                    ignored = True
+                    break
+
+            if not ignored:
+                files.append(path)
+
     return files
 
 def leaf_snapshot(commit_path):
